@@ -1,29 +1,44 @@
 #!/usr/bin/env python3
-
+# TODO: make unswapable
 from useful.cli import CLI, command, NoMatch
+from useful.log import Log
+
 from collections import OrderedDict
+from subprocess import check_output, Popen, PIPE, CalledProcessError
+from getpass import getpass
+import socket
 import pickle
 import sys
 import os
 
+ENCRYPT = "openssl enc -e -aes-256-cbc -salt -pass fd:{fd} -out {path}"
+DECRYPT = "openssl enc -d -aes-256-cbc -salt -pass fd:{fd} -in  {path}"
 
 class Passwords:
-  def __init__(self, path="~/.passwords"):
+  def __init__(self, path, secret):
+    assert secret, "password cannot be empty"
+    self.log = Log("passwords")
+    self.secret = secret
     self.passwords = OrderedDict()
     self.path = os.path.expanduser(path)
+    if not os.path.exists(self.path):
+      return print("No passwords stored yet.\n"
+                   "%s will be created on first save" % self.path)
+
+    r, w = os.pipe()
+    os.write(w, secret.encode())
+    os.close(w)
     try:
-      with open(self.path, 'rb+') as fd:
-        raw = b""
-        chunk = True
-        while chunk:
-          chunk = fd.read()
-          raw += chunk
-      # TODO: here some crypto routines
-      if raw:
-        self.passwords = pickle.loads(raw)
-    except FileNotFoundError:
-      print("No passowords stored yet.\n"
-            "%s will be created on first save" % path)
+      raw = check_output(DECRYPT.format(fd=r, path=self.path),
+                         shell=True, close_fds=False)
+    except CalledProcessError:
+      self.log.critical("Can't load DB. Wrong password?")
+      raise
+    os.close(r)
+    try:
+      self.passwords = pickle.loads(raw)
+    except EOFError:
+      self.log.critical("cannot load db: it is truncated or corrupted")
 
   def delkey(self, key):
     if key in self.passwords:
@@ -37,13 +52,13 @@ class Passwords:
     self.sync()
 
   def sync(self):
-    to_encrypt = pickle.dumps(self.passwords)
-    # TODO: here is strong encryption
-    raw = to_encrypt
-    with open(self.path, 'wb') as fd:
-      written = fd.write(raw)
-      assert written == len(raw)
-      os.fdatasync(fd.fileno())
+    r, w = os.pipe()
+    os.write(w, self.secret.encode())
+    os.close(w)
+    p = Popen(ENCRYPT.format(fd=r, path=self.path),
+              shell=True, close_fds=False, stdin=PIPE)
+    pickle.dump(self.passwords, file=p.stdin)
+    os.close(r)
 
 
 class CLI(CLI):
@@ -64,7 +79,7 @@ class CLI(CLI):
       key = ''  # this will match everything
     matched = 0
     for k, v in self.pw.passwords.items():
-      if k.startswith(key): 
+      if k.find(key) != -1: 
         print(k,':', v)
         matched += 1
     if not matched:
@@ -88,14 +103,25 @@ class CLI(CLI):
   def del_key(self, key):
     self.pw.delkey(key)
 
+  @command("sync", help="sync changes (mainly for debugging purposes")
+  def sync(self):
+    self.pw.sync()
+
+  @command("clear", help="clear screen (watch for console history!")
+  def clear(self):
+    print(chr(27) + "[2J")
 
 if __name__ == '__main__':
-  pw = Passwords()
+  secret = getpass()
+  if not secret:
+    sys.exit("password cannot be empty")
+  pw = Passwords(path="~/.passwords", secret=secret)
   cli = CLI(pw)
   while True:
     try:
       inpt = input("pwshow> ")
-      cli.run_cmd(inpt)
+      if inpt:
+        cli.run_cmd(inpt)
     except EOFError:
       sys.exit("bye")
     except NoMatch:
