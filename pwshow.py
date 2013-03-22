@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# TODO: make unswapable
+
 from useful.cli import CLI, command, NoMatch
+from useful.mlockall import mlockall
 from useful.log import Log
 
 from collections import OrderedDict
@@ -112,6 +113,7 @@ class CLI(CLI):
     print(chr(27) + "[2J")
 
 if __name__ == '__main__':
+  mlockall()  # prevent program from swapping out
   secret = getpass()
   if not secret:
     sys.exit("password cannot be empty")
