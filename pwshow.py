@@ -9,6 +9,7 @@ from subprocess import check_output, Popen, PIPE, CalledProcessError
 from getpass import getpass
 import socket
 import pickle
+import atexit
 import sys
 import os
 
@@ -98,7 +99,9 @@ class CLI(CLI):
         text += [input()] 
     except EOFError:
       pass
+    print("saving...", end=' ')
     self.pw.add(key, "\n".join(text))
+    print("saved")
 
   @command("del [key]")
   def del_key(self, key):
@@ -119,6 +122,7 @@ if __name__ == '__main__':
     sys.exit("password cannot be empty")
   pw = Passwords(path="~/.passwords", secret=secret)
   cli = CLI(pw)
+  atexit.register(cli.clear)
   while True:
     try:
       inpt = input("pwshow> ")
