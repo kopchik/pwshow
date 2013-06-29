@@ -27,7 +27,7 @@ class Passwords:
   def __init__(self, path, secret):
     assert secret, "password cannot be empty"
     self.log = Log("passwords")
-    self.secret = secret.encode()+ b'\n'
+    self.secret = secret.encode()+ b'\n'  # this way it can be directly sent to pipe
     self.passwords = OrderedDict()
     self.path = os.path.expanduser(path)
     if not os.path.exists(self.path):
