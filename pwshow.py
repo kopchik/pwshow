@@ -9,6 +9,7 @@ from collections import OrderedDict
 from subprocess import check_output, Popen, PIPE, CalledProcessError
 from getpass import getpass
 import socket
+import shlex
 import pickle
 import atexit
 import sys
@@ -16,7 +17,11 @@ import os
 
 ENCRYPT = "openssl enc -e -aes-256-cbc -salt -pass fd:{fd} -out {path}"
 DECRYPT = "openssl enc -d -aes-256-cbc -salt -pass fd:{fd} -in  {path}"
+__version__ = "1.3"
 
+
+def MyPopen(cmd, **kwargs):
+  return Popen(shlex.split(cmd), **kwargs)
 
 class Passwords:
   def __init__(self, path, secret):
@@ -32,15 +37,18 @@ class Passwords:
     with MyPipe() as (r,w):
       os.write(w, self.secret)
       try:
-        p = Popen(DECRYPT.format(fd=r, path=self.path),
-                           shell=True, stdout=PIPE, close_fds=False)
-        try:
-          self.passwords = pickle.load(p.stdout)
-        except EOFError:
-          self.log.critical("cannot load db: it is truncated or corrupted")
-
+        cmd = DECRYPT.format(fd=r, path=self.path)
+        with MyPopen(cmd, stdout=PIPE, close_fds=False) as p:
+          try:
+            self.passwords = pickle.load(p.stdout)
+          except Exception as err:
+            self.log.critical("cannot load db: it is truncated or corrupted: %s" % err)
+            raise
+      except FileNotFoundError as err:
+        self.log.critical(err)
+        sys.exit("Please install openssl or check it's in your $PATH.")
       except CalledProcessError as err:
-        self.log.critical("Can't load DB. Wrong password? %s" % err)
+        self.log.critical("Can't load DB. Wrong password or no openssl? %s" % err)
         raise
 
   def delkey(self, key):
@@ -57,10 +65,9 @@ class Passwords:
   def sync(self):
     with MyPipe() as (r,w):
       os.write(w, self.secret)
-      p = Popen(ENCRYPT.format(fd=r, path=self.path),
-                shell=True, close_fds=False, stdin=PIPE)
-      pickle.dump(self.passwords, file=p.stdin)
-      p.stdin.close()
+      cmd = ENCRYPT.format(fd=r, path=self.path)
+      with MyPopen(cmd, close_fds=False, stdin=PIPE) as p:
+        pickle.dump(self.passwords, file=p.stdin)
 
 
 class CLI(CLI):
@@ -120,7 +127,6 @@ class CLI(CLI):
 if __name__ == '__main__':
   mlockall()  # prevent program from swapping out
   secret = getpass()
-  secret = "test"
   if not secret:
     sys.exit("password cannot be empty")
   pw = Passwords(path="~/.passwords", secret=secret)

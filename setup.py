@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
 from distutils.core import setup
+from pwshow import __version__
 
 setup(name='pwshow',
-      version='1.0', #TODO: remove dup version from __init__.py
+      version=__version__,
       author="Kandalintsev Alexandre",
       author_email='spam@messir.net',
       license="GPLv3",
