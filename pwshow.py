@@ -125,6 +125,7 @@ class CLI(CLI):
 
 
 if __name__ == '__main__':
+  print("version:", __version__)
   mlockall()  # prevent program from swapping out
   secret = getpass()
   if not secret:
