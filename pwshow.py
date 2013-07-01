@@ -12,12 +12,13 @@ import socket
 import shlex
 import pickle
 import atexit
+import time
 import sys
 import os
 
 ENCRYPT = "openssl enc -e -aes-256-cbc -salt -pass fd:{fd} -out {path}"
 DECRYPT = "openssl enc -d -aes-256-cbc -salt -pass fd:{fd} -in  {path}"
-__version__ = "1.3"
+__version__ = "1.4"
 
 
 def MyPopen(cmd, **kwargs):
@@ -27,7 +28,7 @@ class Passwords:
   def __init__(self, path, secret):
     assert secret, "password cannot be empty"
     self.log = Log("passwords")
-    self.secret = secret.encode()+ b'\n'  # this way it can be directly sent to pipe
+    self.set_secret(secret)
     self.passwords = OrderedDict()
     self.path = os.path.expanduser(path)
     if not os.path.exists(self.path):
@@ -35,14 +36,15 @@ class Passwords:
                    "%s will be created on first save" % self.path)
 
     with MyPipe() as (r,w):
-      os.write(w, self.secret)
+      os.write(w, self._secret)
       try:
         cmd = DECRYPT.format(fd=r, path=self.path)
         with MyPopen(cmd, stdout=PIPE, close_fds=False) as p:
           try:
             self.passwords = pickle.load(p.stdout)
           except Exception as err:
-            self.log.critical("cannot load db: it is truncated or corrupted: %s" % err)
+            self.log.critical("cannot load db: it is truncated, \n"
+                              "corrupted or wrong password provided: %s" % err)
             raise
       except FileNotFoundError as err:
         self.log.critical(err)
@@ -64,11 +66,13 @@ class Passwords:
 
   def sync(self):
     with MyPipe() as (r,w):
-      os.write(w, self.secret)
+      os.write(w, self._secret)
       cmd = ENCRYPT.format(fd=r, path=self.path)
       with MyPopen(cmd, close_fds=False, stdin=PIPE) as p:
         pickle.dump(self.passwords, file=p.stdin)
 
+  def set_secret(self, secret):
+    self._secret = secret.encode()+ b'\n'  # this way it can be directly sent to pipe
 
 class CLI(CLI):
   def __init__(self, pw):
@@ -119,9 +123,18 @@ class CLI(CLI):
   def sync(self):
     self.pw.sync()
 
+  @command("passwd")
+  def passwd(self):
+    secret1 = getpass("enter new password: ")
+    secret2 = getpass("once more: ")
+    assert secret1 == secret2, "passwords should match, bro"
+    self.pw.set_secret(secret1)
+    self.pw.sync()
+
   @command("clear", help="clear screen (watch for console history!")
   def clear(self):
     print(chr(27) + "[2J")
+    print("beware of console scroll buffer history")
 
 
 if __name__ == '__main__':
@@ -142,3 +155,9 @@ if __name__ == '__main__':
       sys.exit("bye")
     except NoMatch:
       print("unknown command, bro :(")
+    except SystemExit:
+      raise
+    except Exception as err:
+      print(err)
+      time.sleep(1.5)
+      raise
